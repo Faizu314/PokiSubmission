@@ -1,4 +1,4 @@
-# TestHarness
+# PokiSubmission
 
 Private portal for Poki submissions, published with GitHub Pages. It is its own git repo,
 ignored by the BrowserGames repo that contains this folder.
