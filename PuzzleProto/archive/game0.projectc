@@ -59,7 +59,7 @@ position_iterations = 10
 sub_step_count = 4
 
 [bootstrap]
-main_collection = /main/main.collectionc
+main_collection = /dev/dev.collectionc
 render = /builtins/render/default.renderc
 debug_init_script = 
 
@@ -108,7 +108,7 @@ repeat_delay = 0.5
 repeat_interval = 0.2
 gamepads = /builtins/input/default.gamepadsc
 gamepad_deadzone = 0.2
-game_binding = /main/input/game.input_bindingc
+game_binding = /dev/dev.input_bindingc
 use_accelerometer = 0
 
 [sprite]

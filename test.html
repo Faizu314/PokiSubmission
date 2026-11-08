@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Test Harness</title>
+<!--
+	Manual checks for PokiSubmissionRequirements.md, Platform and display (A1 to A6) and
+	Isolation (A7 to A11). See PokiGames/PokiSubmission/README.md.
+	The game must be on the same origin as this page, so the harness can read its network
+	log and inject the storage block.
+-->
+<style>
+	:root { color-scheme: light dark; --bg: #f4f5f8; --fg: #1d2030; --muted: #5d6275; --panel: #ffffff; --line: #d6d9e2; --good: #1d8a4e; --bad: #c43c3c; }
+	@media (prefers-color-scheme: dark) { :root { --bg: #14161d; --fg: #e9eaf0; --muted: #9aa0b4; --panel: #1f222c; --line: #343846; --good: #4fc184; --bad: #ec6b6b; } }
+	body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, sans-serif; }
+	header, section { max-width: 1100px; margin: 0 auto; padding: 16px; }
+	h1 { font-size: 20px; margin: 0 0 4px; }
+	h2 { font-size: 16px; margin: 0 0 8px; }
+	p { margin: 4px 0; }
+	.muted { color: var(--muted); }
+	.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; }
+	.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+	button, select, input { font: inherit; }
+	button { padding: 5px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); cursor: pointer; }
+	button.on { outline: 2px solid #5a82dc; }
+	input[type=number] { width: 72px; }
+	.spacer { height: 110vh; display: flex; align-items: center; justify-content: center; color: var(--muted); border: 2px dashed var(--line); margin: 0 16px; border-radius: 8px; }
+	#frame-holder { display: flex; justify-content: center; padding: 16px; }
+	#game { border: 0; background: #000; display: block; }
+	#scroll-status { position: fixed; right: 12px; bottom: 12px; z-index: 5; padding: 8px 12px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); font-size: 14px; max-width: 320px; }
+	.good { color: var(--good); font-weight: 600; }
+	.bad { color: var(--bad); font-weight: 600; }
+	ul { margin: 4px 0; padding-left: 20px; }
+	code { font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+	<h1>Poki test harness</h1>
+	<p class="muted">Embeds the game the way Poki does: an iframe inside a longer page that can scroll.
+	On a phone, open the game itself instead: <a id="direct-link" href="#">play full screen</a>.</p>
+</header>
+
+<section>
+	<div class="panel">
+		<h2>Game and canvas size (A5)</h2>
+		<div class="row">
+			<label>Game <select id="game-select"></select></label>
+		</div>
+		<div class="row" style="margin-top:8px" id="size-buttons"></div>
+		<div class="row" style="margin-top:8px">
+			<label>W <input type="number" id="width" value="1031"></label>
+			<label>H <input type="number" id="height" value="580"></label>
+			<button id="apply-size">Apply size</button>
+		</div>
+		<p class="muted">At 640x360, 836x470 and 1031x580 the game must fill the frame with no gaps and nothing stretched.</p>
+	</div>
+
+	<div class="panel">
+		<h2>Storage (A7)</h2>
+		<div class="row">
+			<label><input type="checkbox" id="block-storage"> Block storage: <code>localStorage</code> and <code>sessionStorage</code> throw, <code>indexedDB.open</code> fails</label>
+		</div>
+		<p class="muted">The game must still load and play. This copies what browsers do when storage is blocked in a third-party iframe. Real incognito windows are still worth a try.</p>
+	</div>
+
+	<div class="panel">
+		<h2>Network (A8) <button id="refresh-network">Refresh</button></h2>
+		<p class="muted">Play for a while, then refresh. Every request must be on this page's origin (later also the Poki SDK on <code>game-cdn.poki.com</code>).</p>
+		<div id="network"></div>
+	</div>
+
+	<div class="panel">
+		<h2>Scrolling (A6)</h2>
+		<p class="muted">Scroll so the game is in the middle of the screen, click into it, then use the mouse wheel, arrow keys, space, Page Up/Down, and on touch screens swipe on the game. The box at the bottom right turns red if this page moved.</p>
+	</div>
+</section>
+
+<div class="spacer">Page content above the game</div>
+<div id="frame-holder"><iframe id="game" allow="autoplay; fullscreen; gamepad"></iframe></div>
+<div class="spacer">Page content below the game</div>
+
+<div id="scroll-status">Click into the game to start the scroll check.</div>
+
+<script>
+	// Games on this site. Add one entry per game folder.
+	var GAMES = [
+		{ name: "PuzzleProto", path: "PuzzleProto/index.html" }
+	];
+	var SIZES = [
+		[640, 360], [836, 470], [1031, 580], [1280, 720],
+		[800, 600, "4:3"], [812, 375, "phone landscape"], [375, 812, "phone portrait"]
+	];
+	var ALLOWED_ORIGINS = [location.origin, "https://game-cdn.poki.com"];
+
+	// Runs inside the game page, first, when storage is blocked.
+	var STORAGE_BLOCK_SCRIPT = "<script>(function(){" +
+		"function blocked(){throw new DOMException('Storage blocked by the test harness','SecurityError');}" +
+		"Object.defineProperty(window,'localStorage',{get:blocked,configurable:true});" +
+		"Object.defineProperty(window,'sessionStorage',{get:blocked,configurable:true});" +
+		"if(window.indexedDB){var idb=window.indexedDB;idb.open=function(){" +
+		"var request={result:null,error:new DOMException('Storage blocked by the test harness','UnknownError')," +
+		"onsuccess:null,onerror:null,onupgradeneeded:null,onblocked:null,addEventListener:function(type,fn){if(type==='error'){this._listener=fn;}}};" +
+		"setTimeout(function(){var e={target:request,preventDefault:function(){}};if(request.onerror){request.onerror(e);}if(request._listener){request._listener(e);}},0);" +
+		"return request;};}" +
+		"console.warn('Test harness: storage is blocked');" +
+		"})();<\/script>";
+
+	var frame = document.getElementById("game");
+	var gameSelect = document.getElementById("game-select");
+	var blockStorage = document.getElementById("block-storage");
+	var widthInput = document.getElementById("width");
+	var heightInput = document.getElementById("height");
+	var scrollStatus = document.getElementById("scroll-status");
+
+	GAMES.forEach(function(game, index) {
+		var option = document.createElement("option");
+		option.value = index;
+		option.textContent = game.name;
+		gameSelect.appendChild(option);
+	});
+
+	function currentGame() { return GAMES[gameSelect.value]; }
+
+	function setSize(width, height) {
+		frame.style.width = width + "px";
+		frame.style.height = height + "px";
+		widthInput.value = width;
+		heightInput.value = height;
+		Array.prototype.forEach.call(document.querySelectorAll("#size-buttons button"), function(button) {
+			button.classList.toggle("on", button.dataset.size === width + "x" + height);
+		});
+	}
+
+	SIZES.forEach(function(size) {
+		var button = document.createElement("button");
+		button.textContent = size[0] + "x" + size[1] + (size[2] ? " (" + size[2] + ")" : "");
+		button.dataset.size = size[0] + "x" + size[1];
+		button.onclick = function() { setSize(size[0], size[1]); };
+		document.getElementById("size-buttons").appendChild(button);
+	});
+
+	document.getElementById("apply-size").onclick = function() {
+		setSize(parseInt(widthInput.value, 10), parseInt(heightInput.value, 10));
+	};
+
+	function loadGame() {
+		var game = currentGame();
+		var url = new URL(game.path, location.href);
+		document.getElementById("direct-link").href = url.href;
+		document.getElementById("network").textContent = "";
+		resetScrollCheck();
+		if (!blockStorage.checked) {
+			frame.removeAttribute("srcdoc");
+			frame.src = url.href;
+			return;
+		}
+		// srcdoc keeps the game on this origin; <base> makes its relative URLs resolve.
+		fetch(url.href).then(function(response) { return response.text(); }).then(function(html) {
+			var injected = "<base href=\"" + new URL(".", url).href + "\">" + STORAGE_BLOCK_SCRIPT;
+			frame.removeAttribute("src");
+			frame.srcdoc = html.replace(/<head>/i, "<head>" + injected);
+		});
+	}
+
+	gameSelect.onchange = loadGame;
+	blockStorage.onchange = loadGame;
+
+	document.getElementById("refresh-network").onclick = function() {
+		var list = document.getElementById("network");
+		var entries;
+		try {
+			entries = frame.contentWindow.performance.getEntriesByType("resource");
+		} catch (error) {
+			list.innerHTML = "<p class='bad'>Can't read the game's network log: it is not on this origin.</p>";
+			return;
+		}
+		var outside = [];
+		var origins = {};
+		entries.forEach(function(entry) {
+			var origin = new URL(entry.name).origin;
+			origins[origin] = (origins[origin] || 0) + 1;
+			if (ALLOWED_ORIGINS.indexOf(origin) === -1 && !entry.name.startsWith("data:") && !entry.name.startsWith("blob:")) {
+				outside.push(entry.name);
+			}
+		});
+		var html = "<p>" + entries.length + " requests. By origin:</p><ul>";
+		Object.keys(origins).forEach(function(origin) { html += "<li><code>" + origin + "</code>: " + origins[origin] + "</li>"; });
+		html += "</ul>";
+		html += outside.length === 0
+			? "<p class='good'>PASS: no requests outside the allowed origins.</p>"
+			: "<p class='bad'>FAIL: requests to other origins:</p><ul>" + outside.map(function(name) { return "<li><code>" + name + "</code></li>"; }).join("") + "</ul>";
+		list.innerHTML = html;
+	};
+
+	// Scroll check: once the game has focus, any scroll of this page is a failure.
+	var scrollStart = null;
+	var worstScroll = 0;
+	function resetScrollCheck() {
+		pointerOnGame = false;
+		scrollStart = null;
+		worstScroll = 0;
+		scrollStatus.textContent = "Click into the game to start the scroll check.";
+		scrollStatus.className = "";
+	}
+	// The check runs while the game has focus and the mouse or finger is on it. Scrolling with
+	// the pointer over the rest of this page is allowed, even while the game has focus (the engine
+	// focuses its canvas on load, before any click).
+	// Pointer events over the iframe reach only the game's page, and over the rest only this one.
+	var pointerOnGame = false;
+	["pointermove", "pointerdown"].forEach(function(type) {
+		document.addEventListener(type, function() { pointerOnGame = false; }, { passive: true });
+	});
+	frame.addEventListener("load", function() {
+		try {
+			["pointermove", "pointerdown"].forEach(function(type) {
+				frame.contentWindow.addEventListener(type, function() { pointerOnGame = true; }, { passive: true });
+			});
+		} catch (error) {
+			scrollStatus.innerHTML = "<span class='bad'>The game isn't on this origin, so scrolling can't be checked here.</span>";
+		}
+	});
+	function gameHasFocus() { return document.activeElement === frame; }
+	function isChecking() { return gameHasFocus() && pointerOnGame; }
+	// Polled, because focus moving into an iframe doesn't always reach this page as an event.
+	setInterval(function() {
+		if (isChecking() && scrollStart === null) {
+			scrollStart = window.scrollY;
+			worstScroll = 0;
+			scrollStatus.innerHTML = "<span class='good'>Checking:</span> the page hasn't moved.";
+		} else if (!isChecking() && scrollStart !== null) {
+			scrollStart = null;
+			scrollStatus.innerHTML += "<br><span class='muted'>Paused: click or tap the game to check again.</span>";
+		}
+	}, 200);
+	window.addEventListener("scroll", function() {
+		if (scrollStart === null || !isChecking()) {
+			return;
+		}
+		worstScroll = Math.max(worstScroll, Math.abs(window.scrollY - scrollStart));
+		if (worstScroll > 0) {
+			scrollStatus.innerHTML = "<span class='bad'>FAIL: the page scrolled " + worstScroll + " px while the game had focus.</span>";
+		}
+	});
+
+	setSize(1031, 580);
+	loadGame();
+</script>
+</body>
+</html>
