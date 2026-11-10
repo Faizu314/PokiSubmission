@@ -1,19 +1,38 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-	<meta charset="utf-8">
-	<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
-	<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0, minimal-ui, shrink-to-fit=no, viewport-fit=cover">
-	<meta name="apple-mobile-web-app-capable" content="yes">
-	<meta name="mobile-web-app-capable" content="yes">
-	<!-- The above 5 meta tags *must* come first in the head; any other head content must come *after* these tags -->
-
-	<link rel="preload" as="fetch" crossorigin href="archive/archive_files.json">
-	<link rel="preload" as="fetch" crossorigin href="PuzzleProto_wasm.js">
-	<link rel="preload" as="fetch" crossorigin href="PuzzleProto.wasm">
-
-	<title>PuzzleProto</title>
-	<style type='text/css'>
+ <head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0, viewport-fit=cover">
+  <link rel="preload" as="fetch" crossorigin href="archive/archive_files.json">
+  <link rel="preload" as="fetch" crossorigin href="PuzzleProto_wasm.js">
+  <link rel="preload" as="fetch" crossorigin href="PuzzleProto.wasm">
+  <script id="poki-sdk-fallback">
+		// The poki-sdk extension adds its own SDK script tag and start-up script to this page. Its start-up
+		// waits for the SDK script's load event, so if the SDK is blocked (ad blocker, offline) the game
+		// would never start. This catches that load error and starts the game without the SDK (A42).
+		// runFunc and isPokiSDKInited are the extension's globals; it also waits for the wasm itself.
+		var pokiSdkFailed = false;
+		var pokiFallbackDone = false;
+		function pokiStartWithoutSdk() {
+			// Once only: runFunc itself has no guard against starting the engine twice.
+			if (pokiSdkFailed && !pokiFallbackDone && typeof runFunc === 'function') {
+				pokiFallbackDone = true;
+				isPokiSDKInited = true;
+				runFunc();
+			}
+		}
+		window.addEventListener('error', function(event) {
+			var target = event.target;
+			if (target && target.tagName === 'SCRIPT' && target.src && target.src.indexOf('poki-sdk.js') !== -1) {
+				pokiSdkFailed = true;
+				pokiStartWithoutSdk();
+			}
+		}, true);
+		// The error can come before the extension's script has run; try again once the page is loaded.
+		window.addEventListener('load', pokiStartWithoutSdk);
+	</script>
+  <title>PuzzleProto</title>
+  <style>
 	html, body {
 		margin: 0;
 		padding: 0;
@@ -39,7 +58,7 @@
 		user-select: none;
 	}
 
-	.canvas-app-container {
+	#app-container {
 		width: 100%;
 		height: 100%;
 		position: absolute;
@@ -59,12 +78,7 @@
 		touch-action: none;
 	}
 
-	canvas:focus, canvas:active {
-		outline: none;
-		border: 0;
-	}
-
-	.message {
+	#webgl-not-supported {
 		display: none;
 		margin: 3em;
 		color: #f0f0f5;
@@ -87,29 +101,21 @@
 		transform: scaleX(1.0);
 	}
 	</style>
-</head>
-
-<body>
-	<div id="app-container" class="canvas-app-container">
-		<div id="running-from-file-warning" class="message">
-			<h1>Running from a local file</h1>
-			<p>This game has to be loaded from a web server, not opened as a file.</p>
-		</div>
-		<div id="webgl-not-supported" class="message">
-			<h1>WebGL is not supported</h1>
-			<p>Your browser can't run this game. Try another browser, or turn on hardware acceleration.</p>
-		</div>
-		<div id="canvas-container" class="canvas-app-canvas-container">
-			<canvas id="canvas" class="canvas-app-canvas" tabindex="1" width="1280" height="720"></canvas>
-		</div>
-	</div>
-	<script>
-		// Fallback to make sure globalThis is available in browsers older than Chrome 71.
-		if (typeof globalThis === 'undefined') {
-			window.globalThis = window;
-		}
-	</script>
-	<script id='prevent-page-scroll' type='text/javascript'>
+  <link rel="dns-prefetch" href="//api.poki.com">
+  <link rel="dns-prefetch" href="//a.poki-cdn.com">
+  <script defer src="https://game-cdn.poki.com/scripts/v2/poki-sdk.js" onload="poki_sdk_loaded()"></script>
+ </head>
+ <body>
+  <div id="app-container">
+   <div id="webgl-not-supported">
+    <h1>WebGL is not supported</h1>
+    <p>Your browser can't run this game. Try another browser, or turn on hardware acceleration.</p>
+   </div>
+   <div id="canvas-container">
+    <canvas id="canvas" tabindex="1" width="1280" height="720"></canvas>
+   </div>
+  </div>
+  <script id="prevent-page-scroll">
 		// On Poki the game sits in an iframe on a longer page. Keys, the wheel and touches that
 		// would scroll that page must not (A6). The engine still receives every event.
 		(function() {
@@ -127,16 +133,42 @@
 			}, { passive: false });
 		})();
 	</script>
-	<script id='engine-loader' type='text/javascript' src="dmloader.js"></script>
-	<script id='engine-start' type='text/javascript'>
-		var runningFromFileWarning = document.getElementById("running-from-file-warning");
-		if (window.location.href.startsWith("file://")) {
-			runningFromFileWarning.style.display = "block";
+  <script id="engine-loader" src="dmloader.js"></script>
+  <script id="engine-start">
+		EngineLoader.load("canvas", "PuzzleProto");
+	</script>
+  <script id="poki-sdk-setup" type="text/javascript">
+		var isWasmLoaded = false;
+		var isPokiSDKInited = false;
+		var runFunc = function() {
+			if (isPokiSDKInited && isWasmLoaded) {
+				Module.runApp("canvas");
+			}
 		}
-		else {
-			EngineLoader.load("canvas", "PuzzleProto");
-			runningFromFileWarning.parentNode.removeChild(runningFromFileWarning);
+		Module['onRuntimeInitialized'] = function() {
+			isWasmLoaded = true;
+			runFunc();
+		};
+		function poki_sdk_loaded() {
+			var data = {};
+			var isLoadFinished = false;
+			Progress.addListener(function(percentage){
+				data.percentageDone = percentage / 100;
+				if (!isLoadFinished)
+					PokiSDK.gameLoadingProgress(data);
+				if (percentage == 100 && !isLoadFinished) {
+					PokiSDK.gameLoadingFinished();
+					isLoadFinished = true;
+				}
+			});
+			PokiSDK.init().then(()=>{
+					isPokiSDKInited = true;
+					runFunc();
+				}, ()=>{
+					isPokiSDKInited = true;
+					runFunc();
+				});
 		}
 	</script>
-</body>
+ </body>
 </html>
